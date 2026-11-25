@@ -94,6 +94,21 @@ combination at each cut plus the all-kept reference. It is intentionally an
 *overestimate*: identical file states at different cuts and histories are not
 deduplicated. It can be computed without APSW or candidate materialization.
 
+### Bounded exploration and reproducibility
+
+Within each selected crash boundary, the `--seed` value determines a
+constant-memory permutation of the Cartesian product of legal per-file
+prefixes. This spreads a small candidate budget across the possible prefix
+lengths instead of always starting at the shortest ones. With an unlimited
+budget, every legal combination is still generated exactly once for that
+boundary. The all-kept control remains first, independent of seed.
+
+The generator additionally skips boundaries with identical per-file effect
+counts, durability floors, and begun/acknowledged operation histories. Such
+boundaries have the same crash-state choices and application observation
+context in `file-prefix-v1`. The trace inspector reports a conservative
+pre-pruning upper bound, so its value can exceed the actual emitted recipes.
+
 The model assumes that individual file effects are applied in recorded order,
 the completed per-file `xSync` is a persistence barrier, and the modeled
 `syncdir=True` deletion has reached stable directory state. It does not model

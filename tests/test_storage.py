@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from crashcheck.storage.model import materialize, recipes, reductions
+from crashcheck.storage.model import materialize, recipes, reductions, _permuted_indices
 from crashcheck.storage.trace import TraceWriter, read_trace, safe_file
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -87,6 +87,36 @@ class StorageModelVectors(unittest.TestCase):
             self.output({"cut": 0, "prefixes": {"../escape": 1}})
         with self.assertRaisesRegex(ValueError, "unsupported SQLite trace file"):
             safe_file("../escape")
+
+    def test_seeded_prefix_enumeration_is_repeatable_and_complete(self):
+        for position in range(4):
+            self.writer.append("write", "app.sqlite", payload=bytes([65 + position]),
+                               offset=position)
+        self.writer.append("marker", name="crash")
+        self.finish()
+        by_seed = [tuple(r["prefixes"]["app.sqlite"] for r in recipes(self.trace, seed)
+                         if r["cut"] == 4 and r["prefixes"]["app.sqlite"] != 4)
+                   for seed in range(6)]
+        self.assertGreater(len(set(by_seed)), 1)
+        self.assertEqual(by_seed[2], tuple(r["prefixes"]["app.sqlite"]
+                                           for r in recipes(self.trace, 2)
+                                           if r["cut"] == 4 and r["prefixes"]["app.sqlite"] != 4))
+        for values in by_seed:
+            self.assertEqual(sorted(values), [0, 1, 2, 3])
+        self.assertEqual(len(set(_permuted_indices([4, 5, 7], 42, 9))), 140)
+
+    def test_repeated_identical_markers_do_not_expand_search(self):
+        self.writer.append("write", "app.sqlite", payload=b"A", offset=0)
+        self.writer.append("marker", name="same-state-1")
+        self.writer.append("marker", name="same-state-2")
+        self.finish()
+        generated = list(recipes(self.trace, 0))
+        # The final all-kept reference is retained; the redundant second
+        # marker itself emits no additional combinations.
+        self.assertEqual([r for r in generated if r["cut"] == 2],
+                         [{"cut": 2, "prefixes": {"app.sqlite": 1}}])
+        self.assertEqual(sorted(r["prefixes"]["app.sqlite"] for r in generated
+                                if r["cut"] == 1), [0, 1])
 
 
 @unittest.skipUnless(HAS_APSW, "APSW is an optional storage-mode dependency")

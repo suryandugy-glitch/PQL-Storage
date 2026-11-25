@@ -9,8 +9,9 @@ scope. xDelete(syncdir=True) is a durability barrier for deletion in this model.
 
 from __future__ import annotations
 
-from itertools import product
+from math import gcd, prod
 from pathlib import Path
+from random import Random
 import shutil
 
 from .trace import read_trace, safe_file
@@ -53,11 +54,37 @@ def all_kept_recipe(trace: Path):
     return {"cut": cut, "prefixes": dict(sorted(counts.items()))}
 
 
+def _permuted_indices(widths, seed, cut):
+    """Visit a Cartesian space exactly once, using O(1) enumeration memory.
+
+    A seeded modular stride permutes integer indices; a mixed-radix decoder
+    below maps each index back to its per-file retained-effect counts. This
+    avoids building or shuffling a potentially enormous Cartesian product.
+    """
+    total = prod(widths)
+    rng = Random(seed ^ ((cut + 1) * 0x9E3779B97F4A7C15))
+    start = rng.randrange(total)
+    stride = 1
+    if total > 1:
+        stride = rng.randrange(1, total)
+        while gcd(stride, total) != 1:
+            stride = stride + 1 if stride + 1 < total else 1
+    for number in range(total):
+        index = (start + number * stride) % total
+        digits = []
+        for width in reversed(widths):
+            index, digit = divmod(index, width)
+            digits.append(digit)
+        yield tuple(reversed(digits))
+
+
 def recipes(trace: Path, seed: int):
-    """Yield all legal per-file prefixes in deterministic order (never silently sample).
+    """Yield all legal per-file prefixes in seeded order (never silently sample).
 
     The backend's candidate budget takes a bounded prefix of this generator and
     records truncation as inconclusive, rather than calling sampling a pass.
+    Repeated cuts with identical effect/floor counts and receipt histories are
+    skipped, since they cannot produce a distinct modeled recovered state.
     """
     _, events = read_trace(trace)
     if not events:
@@ -71,12 +98,20 @@ def recipes(trace: Path, seed: int):
     # crash boundaries. Explore them before low-level intermediate writes.
     priority = {"marker": 0, "ack": 0, "begin": 1, "sync": 2}
     cuts.sort(key=lambda cut: (priority.get(events[cut]["kind"], 3), cut))
+    seen_frontiers = set()
     for cut in cuts:
-        counts, floors, _ = at_cut(events, cut)
+        counts, floors, history = at_cut(events, cut)
         paths = sorted(counts)
-        choices = [range(floors.get(path, 0), counts[path]+1) for path in paths]
-        for combo in product(*choices):
-            prefixes = dict(zip(paths, combo))
+        frontier = (tuple(sorted(counts.items())),
+                    tuple((path, floors.get(path, 0)) for path in paths),
+                    tuple(history["begun"]), tuple(history["acknowledged"]))
+        if frontier in seen_frontiers:
+            continue
+        seen_frontiers.add(frontier)
+        lower = [floors.get(path, 0) for path in paths]
+        widths = [counts[path] - floor + 1 for path, floor in zip(paths, lower)]
+        for offsets in _permuted_indices(widths, seed, cut):
+            prefixes = dict(zip(paths, (floor + offset for floor, offset in zip(lower, offsets))))
             key = (cut, tuple(sorted(prefixes.items())))
             if key not in seen:
                 seen.add(key)
