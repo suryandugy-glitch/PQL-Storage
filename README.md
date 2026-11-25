@@ -1,6 +1,25 @@
 # CrashCheck
 
+> **Development status:** The `main` branch provides the process-crash testing harness. APSW-based SQLite VFS tracing and file-prefix crash-state exploration are developed on [`feat/storage-engineering`](https://github.com/suryandugy-glitch/PQL-Storage/tree/feat/storage-engineering). Check out that branch before using its storage-model commands.
+
+## Project overview
+
+CrashCheck is a Python developer tool for investigating **application-level SQLite consistency after abrupt termination**. A scenario supplies a fresh database fixture, a reproducible workload, optional recovery logic, and invariant checks. The harness produces crash candidates, reopens them in isolated workers, and saves replayable evidence when an invariant fails.
+
+| Layer | Responsibility |
+| --- | --- |
+| Scenario hooks | Define setup, operations, recovery and invariants. |
+| Crash scheduler | Select process markers or delegate crash-state generation to a storage adapter. |
+| Candidate verifier | Reopen SQLite, check integrity and invoke application recovery and invariants. |
+| Evidence pipeline | Deduplicate outcomes, record run manifests, replay and minimize model failures. |
+
+**Scope:** The default process mode terminates a worker while the host OS continues running. It does not simulate a power failure. See the [storage-engineering branch](https://github.com/suryandugy-glitch/PQL-Storage/tree/feat/storage-engineering) for its explicitly bounded disk-persistence model.
+
 CrashCheck runs a SQLite application from a clean fixture, stops the process at a scenario marker and checks what a fresh process can recover. It requires Python 3.11+ and the core uses only the standard library. The reference environment is Linux.
+
+## Repository relationship
+
+This repository is a **standalone copy for storage-engineering development**. It is not a GitHub fork; the feature branch contains the latest seeded storage-model improvements.
 
 ## Run the booking example
 
