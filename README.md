@@ -1,9 +1,38 @@
 # CrashCheck
 
-Storage engineers can inspect a recorded model trace without replaying every
-candidate: `python -m crashcheck inspect-trace storage-run/trace`. The JSON
-summary includes sync barriers and an upper bound on raw crash recipes; see
-`docs/storage_model.md` for the supported durability model and its limits.
+> **Active development branch:** `feat/storage-engineering` in [suryandugy-glitch/PQL-Storage](https://github.com/suryandugy-glitch/PQL-Storage). The `main` branch documents the process-testing baseline; this branch includes the experimental APSW VFS recorder and `file-prefix-v1` storage model.
+
+## What it does
+
+CrashCheck targets **application-level consistency bugs**, such as a booking decrement committed separately from its receipt. It captures candidate crash states, verifies SQLite integrity and application invariants in fresh workers, then saves reproducible failure evidence.
+
+| Component | Purpose |
+| --- | --- |
+| APSW VFS recorder | Capture completed SQLite file writes, truncations, syncs and journal effects. |
+| `file-prefix-v1` model | Construct per-file retained-effect prefixes respecting completed sync barriers. |
+| Verification workers | Reopen recovered candidates, run optional recovery and check invariants. |
+| Reports and bundles | Expose evidence, trace statistics, deterministic replay and minimization. |
+
+### Latest storage-engineering improvements
+
+- **Seeded exploration:** `--seed` deterministically permutes legal per-file prefix combinations within each crash boundary; an unbounded run still covers the complete modeled combination space.
+- **Boundary pruning:** Equivalent crash boundaries with the same file-effect counts, durability floors and operation histories are skipped.
+- **Constant-memory combination traversal:** The iterator avoids materializing the full Cartesian product; this does **not** imply constant total memory usage across the entire test runner.
+
+The inspector's `candidate_upper_bound` is intentionally conservative and may be greater than the number of recipes emitted after pruning. A candidate budget that truncates exploration remains **inconclusive**, not a pass. Implementation details and test vectors are in [docs/storage_model.md](docs/storage_model.md).
+
+**Model boundary:** Single-writer SQLite with rollback journal `DELETE`, `synchronous=EXTRA` and `mmap_size=0`. The model retains ordered per-file effect prefixes; it does not claim to simulate arbitrary write reordering, torn sectors, WAL, SSD cache behavior or all real power failures. Unsupported configurations are inconclusive.
+
+## Quick start
+
+```sh
+python -m pip install -r requirements-storage.txt
+python -m crashcheck test examples/booking.py --mode modeled --model file-prefix-v1 --seed 42 --max-candidates 100 --out storage-run
+python -m crashcheck inspect-trace storage-run/trace
+python -m unittest discover -s tests -q
+```
+
+The example intentionally contains a split transaction; inspect generated failures before using `replay` and `minimize`. Run the commands from the checkout root. `--max-candidates` controls the exploration budget rather than redefining the model's completeness.
 
 CrashCheck runs a SQLite application from a clean fixture, stops the process at a scenario marker and checks what a fresh process can recover. It requires Python 3.11+ and the core uses only the standard library. The reference environment is Linux.
 
